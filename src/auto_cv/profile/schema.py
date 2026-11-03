@@ -2,7 +2,7 @@
 """
 Auto-CV - Profile Schema Module
 Version: 1.0.0
-Author: Auto-CV Team
+Author: Pittaya
 License: MIT
 Description: Pydantic models for user profile (PersonalInfo, Experience, Education, Skills, Preferences, Profile).
 """

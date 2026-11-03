@@ -2,7 +2,7 @@
 """
 Auto-CV - Configuration Module
 Version: 1.0.0
-Author: Auto-CV Team
+Author: Pittaya
 License: MIT
 Description: Central configuration using Pydantic Settings with env var support.
 """
