@@ -59,7 +59,7 @@ class RerankSummary:
 # ============================================================
 
 class AnthropicClient:
-    """Wrapper for Anthropic SDK using Claude Code subscription."""
+    """Wrapper for Anthropic SDK - supports direct API or FreeClaudeCode proxy."""
 
     _instance: Optional["AnthropicClient"] = None
     _client: Optional[Anthropic] = None
@@ -69,18 +69,35 @@ class AnthropicClient:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, api_key: Optional[str] = None, settings=None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        settings=None,
+    ):
         if hasattr(self, "_initialized") and self._initialized:
             return
 
         self.settings = settings or get_settings()
 
-        # Use provided key, or env var, or settings
+        # Support FreeClaudeCode proxy via base_url
+        # Priority: explicit base_url > settings.fcc_base_url > env var > None (direct API)
+        self.base_url = base_url or getattr(self.settings, "fcc_base_url", None) or os.environ.get("FCC_BASE_URL")
+
+        # API key: for direct API use real key; for FCC proxy can be dummy
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY") or self.settings.anthropic_api_key
 
-        if self.api_key:
+        if self.base_url:
+            # FCC proxy mode - api_key can be dummy
+            self._client = Anthropic(
+                base_url=self.base_url,
+                api_key=self.api_key or "fcc-proxy",
+            )
+        elif self.api_key:
+            # Direct Anthropic API mode
             self._client = Anthropic(api_key=self.api_key)
         else:
+            # No client configured
             self._client = None
 
         self._initialized = True

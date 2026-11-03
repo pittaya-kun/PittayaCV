@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     # ============================================================
     llm_provider: str = Field(
         default="anthropic",
-        description="Provedor LLM: 'anthropic' | 'claude-cli' | 'ollama'",
+        description="Provedor LLM: 'anthropic' | 'claude-cli' | 'ollama' | 'fcc'",
     )
     llm_model: str = Field(
         default="claude-sonnet-5-5",
@@ -65,7 +65,11 @@ class Settings(BaseSettings):
     )
     anthropic_api_key: Optional[str] = Field(
         default=None,
-        description="API Key Anthropic (opcional se usar claude-cli)",
+        description="API Key Anthropic (opcional se usar FCC proxy)",
+    )
+    fcc_base_url: Optional[str] = Field(
+        default=None,
+        description="FreeClaudeCode proxy URL (ex: http://localhost:8080)",
     )
     ollama_base_url: str = Field(
         default="http://localhost:11434",
