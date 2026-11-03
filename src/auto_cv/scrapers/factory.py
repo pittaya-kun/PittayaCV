@@ -231,11 +231,13 @@ class ScraperFactory:
             history_repo = SearchHistoryRepository(session)
 
             # Log search history
-            history = history_repo.create(
+            from auto_cv.storage.models import create_search_history
+            history = create_search_history(
                 source=filters.query if filters else "multi",
                 query=filters.query if filters else None,
                 filters=filters.__dict__ if filters else None,
             )
+            history = history_repo.create(history)
 
             for scraped_job in jobs:
                 job = scraped_job.to_job()
@@ -315,15 +317,17 @@ def scrape_source(
 
     if save_to_db and result.jobs:
         from auto_cv.storage.sqlite import JobRepository, SearchHistoryRepository, session_scope
+        from auto_cv.storage.models import create_search_history
         with session_scope() as session:
             job_repo = JobRepository(session)
             history_repo = SearchHistoryRepository(session)
 
-            history = history_repo.create(
+            history = create_search_history(
                 source=source.value,
                 query=filters.query if filters else None,
                 filters=filters.__dict__ if filters else None,
             )
+            history = history_repo.create(history)
 
             for scraped_job in result.jobs:
                 job = scraped_job.to_job()

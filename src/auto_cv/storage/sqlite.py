@@ -24,6 +24,7 @@ from auto_cv.storage.models import (
     Application,
     SearchHistory,
     EmbeddingCache,
+    Match,
     JobSource,
     ApplicationStatus,
     create_all_tables,
@@ -217,11 +218,6 @@ class JobRepository(BaseRepository):
     # UPSERT (idempotente por source+external_id)
     # --------------------------------------------------------
 
-    @retry(
-        wait=wait_exponential(multiplier=0.1, min=0.1, max=1.0),
-        stop=stop_after_attempt(3),
-        retry=retry_if_exception_type(Exception),
-    )
     def upsert(self, job: Job) -> Job:
         """
         Insere ou atualiza Job por (source, external_id).
@@ -230,32 +226,54 @@ class JobRepository(BaseRepository):
         """
         existing = self.find_by_source_external(job.source, job.external_id)
 
+        def _to_datetime(val):
+            if val is None:
+                return None
+            if isinstance(val, str):
+                try:
+                    return datetime.fromisoformat(val)
+                except (ValueError, TypeError):
+                    return None
+            return val
+
         if existing:
-            # Atualiza campos mutáveis
-            existing.title = job.title
-            existing.company = job.company
-            existing.location = job.location
-            existing.work_mode = job.work_mode
-            existing.job_type = job.job_type
-            existing.description = job.description
-            existing.description_html = job.description_html
-            existing.raw_data = job.raw_data
-            existing.salary_min = job.salary_min
-            existing.salary_max = job.salary_max
-            existing.salary_currency = job.salary_currency
-            existing.salary_period = job.salary_period
-            existing.posted_date = job.posted_date
-            existing.expires_date = job.expires_date
-            existing.is_active = job.is_active
-            existing.is_duplicate = job.is_duplicate
-            existing.embedding_id = job.embedding_id
-            existing.match_score = job.match_score
-            existing.match_method = job.match_method
-            existing.matched_at = job.matched_at
+            # Atualiza apenas campos não-None do novo job
+            update_fields = {
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "work_mode": job.work_mode,
+                "job_type": job.job_type,
+                "description": job.description,
+                "description_html": job.description_html,
+                "raw_data": job.raw_data,
+                "salary_min": job.salary_min,
+                "salary_max": job.salary_max,
+                "salary_currency": job.salary_currency,
+                "salary_period": job.salary_period,
+                "posted_date": _to_datetime(job.posted_date),
+                "expires_date": _to_datetime(job.expires_date),
+                "is_active": job.is_active,
+                "is_duplicate": job.is_duplicate,
+                "embedding_id": job.embedding_id,
+                "match_score": job.match_score,
+                "match_method": job.match_method,
+                "matched_at": _to_datetime(job.matched_at),
+            }
+            for field, value in update_fields.items():
+                if value is not None:
+                    setattr(existing, field, value)
             existing.updated_at = datetime.utcnow()
             self.session.commit()
             return existing
         else:
+            # Also convert dates for new job
+            if isinstance(job.posted_date, str):
+                job.posted_date = _to_datetime(job.posted_date)
+            if isinstance(job.expires_date, str):
+                job.expires_date = _to_datetime(job.expires_date)
+            if isinstance(job.matched_at, str):
+                job.matched_at = _to_datetime(job.matched_at)
             self.session.add(job)
             self.session.commit()
             self.session.refresh(job)
@@ -506,6 +524,16 @@ class SearchHistoryRepository(BaseRepository):
         self.session.refresh(history)
         return history
 
+    def update(self, history_id: int, **kwargs) -> Optional[SearchHistory]:
+        """Update search history fields."""
+        history = self.session.query(SearchHistory).filter(SearchHistory.id == history_id).first()
+        if history:
+            for key, value in kwargs.items():
+                if hasattr(history, key):
+                    setattr(history, key, value)
+            self.session.commit()
+        return history
+
     def get_recent(self, limit: int = 20) -> List[SearchHistory]:
         return (
             self.session.query(SearchHistory)
@@ -632,7 +660,7 @@ class EmbeddingCacheRepository(BaseRepository):
         )
 
         # Se ainda excede max_entries, deleta menos acessados
-        total = self.session.query(EmbeddingCache).count()
+        total = self.count()
         if total > max_entries:
             excess = total - max_entries
             oldest = (
@@ -645,6 +673,11 @@ class EmbeddingCacheRepository(BaseRepository):
 
         self.session.commit()
         return deleted
+
+    def count(self) -> int:
+        """Conta total de entradas no cache."""
+        from sqlalchemy import func
+        return self.session.query(func.count(EmbeddingCache.id)).scalar() or 0
 
     def get_stats(self) -> Dict[str, Any]:
         from sqlalchemy import func
@@ -669,6 +702,81 @@ class EmbeddingCacheRepository(BaseRepository):
 
 
 # ============================================================
+# MATCH REPOSITORY
+# ============================================================
+
+class MatchRepository(BaseRepository):
+    """CRUD para Match (profile-job matches)."""
+
+    def upsert(
+        self,
+        profile_id: int,
+        job_id: int,
+        score: float,
+        match_method: str,
+        match_details: Optional[Dict] = None,
+    ) -> Match:
+        """Insere ou atualiza match."""
+        existing = (
+            self.session.query(Match)
+            .filter(Match.profile_id == profile_id, Match.job_id == job_id)
+            .first()
+        )
+
+        if existing:
+            existing.score = score
+            existing.match_method = match_method
+            if match_details:
+                existing.match_details = match_details
+            existing.created_at = datetime.utcnow()
+        else:
+            existing = Match(
+                profile_id=profile_id,
+                job_id=job_id,
+                score=score,
+                match_method=match_method,
+                match_details=match_details or {},
+            )
+            self.session.add(existing)
+
+        self.session.commit()
+        self.session.refresh(existing)
+        return existing
+
+    def get_by_profile(self, profile_id: int, min_score: float = 0.0, limit: int = 50) -> List[Match]:
+        """Busca matches de um perfil."""
+        return (
+            self.session.query(Match)
+            .filter(Match.profile_id == profile_id, Match.score >= min_score)
+            .order_by(Match.score.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def get_by_job(self, job_id: int, limit: int = 50) -> List[Match]:
+        """Busca matches de uma vaga."""
+        return (
+            self.session.query(Match)
+            .filter(Match.job_id == job_id)
+            .order_by(Match.score.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def delete_old(self, max_age_days: int = 90) -> int:
+        """Remove matches antigos."""
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+        deleted = (
+            self.session.query(Match)
+            .filter(Match.created_at < cutoff)
+            .delete(synchronize_session=False)
+        )
+        self.session.commit()
+        return deleted
+
+
+# ============================================================
 # FACTORY / CONVENIENCE (OCP - fácil trocar implementação)
 # ============================================================
 
@@ -686,6 +794,10 @@ def get_search_history_repo(session: Optional[Session] = None, settings=None) ->
 
 def get_embedding_cache_repo(session: Optional[Session] = None, settings=None) -> EmbeddingCacheRepository:
     return EmbeddingCacheRepository(session, settings)
+
+
+def get_match_repo(session: Optional[Session] = None, settings=None) -> MatchRepository:
+    return MatchRepository(session, settings)
 
 
 # Context managers para uso direto
@@ -710,6 +822,12 @@ def embedding_cache_repo_scope(settings=None) -> Generator[EmbeddingCacheReposit
         yield EmbeddingCacheRepository(session, settings)
 
 
+@contextmanager
+def match_repo_scope(settings=None) -> Generator[MatchRepository, None, None]:
+    with session_scope(settings) as session:
+        yield MatchRepository(session, settings)
+
+
 # ============================================================
 # EXPORTS
 # ============================================================
@@ -729,14 +847,17 @@ __all__ = [
     "ApplicationRepository",
     "SearchHistoryRepository",
     "EmbeddingCacheRepository",
+    "MatchRepository",
     # Factories
     "get_job_repo",
     "get_application_repo",
     "get_search_history_repo",
     "get_embedding_cache_repo",
+    "get_match_repo",
     # Scoped context managers
     "job_repo_scope",
     "application_repo_scope",
     "search_history_repo_scope",
     "embedding_cache_repo_scope",
+    "match_repo_scope",
 ]

@@ -41,6 +41,13 @@ from auto_cv.storage.models import (
     JobSource, ApplicationStatus, MatchMethod,
 )
 from auto_cv.storage.files import get_cv_output_dir, list_cvs
+from auto_cv.matching import (
+    MatchingPipeline,
+    MatchConfig,
+    get_embedding_manager,
+    DEFAULT_THRESHOLD,
+    DEFAULT_TOP_K,
+)
 
 
 # ============================================================
@@ -914,7 +921,7 @@ def scrape_all_cmd(
 
 
 # ============================================================
-# COMMANDS: MATCH (Fase 3 - placeholder)
+# COMMANDS: MATCH (Fase 3)
 # ============================================================
 
 match_app = typer.Typer(name="match", help="Matching de vagas (Fase 3)")
@@ -923,20 +930,141 @@ app.add_typer(match_app)
 
 @match_app.command("run")
 def match_run(
-    min_score: float = typer.Option(0.3, "--min-score"),
-    top_n: int = typer.Option(20, "--top-n"),
-    rerank: bool = typer.Option(True, "--rerank/--no-rerank"),
+    min_score: float = typer.Option(DEFAULT_THRESHOLD, "--min-score", help="Score mínimo cosine (0-1)"),
+    top_n: int = typer.Option(DEFAULT_TOP_K, "--top-n", help="Top N para reranker LLM"),
+    rerank: bool = typer.Option(True, "--rerank/--no-rerank", help="Usar LLM reranker"),
+    limit: int = typer.Option(500, "--limit", help="Máximo de vagas para comparar"),
+    profile_id: Optional[int] = typer.Option(None, "--profile-id", help="ID do perfil (default: atual)"),
+    save: bool = typer.Option(True, "--save/--no-save", help="Salvar matches no banco"),
 ):
-    """Executa matching embeddings + LLM (placeholder)."""
-    console.print("[yellow]⚠ Matching não implementado (Fase 3)[/yellow]")
+    """Executa pipeline completo: embeddings → cosine similarity → LLM rerank."""
+    settings = get_settings()
+    init_db(settings)
+
+    manager = ProfileManager(settings)
+    profile_result = manager.ensure_profile()
+
+    if not profile_result.profile:
+        console.print("❌ [red]Perfil não configurado. Rode:[/red] auto-cv init")
+        raise typer.Exit(1)
+
+    profile = profile_result.profile
+
+    console.print(Panel.fit(
+        f"[bold]Matching Pipeline[/bold]\n"
+        f"Perfil: {profile.personal.name} ({profile.current_role or 'sem cargo'})\n"
+        f"Threshold: {min_score:.0%} | Top-N: {top_n} | Rerank: {'Sim' if rerank else 'Não'}",
+        title="🎯 Iniciando Match",
+        border_style="cyan",
+    ))
+
+    # Load jobs from DB
+    with session_scope(settings) as session:
+        job_repo = JobRepository(session)
+        jobs = job_repo.get_active(limit=limit)
+
+    if not jobs:
+        console.print("[yellow]⚠[/yellow] Nenhuma vaga no banco. Rode 'auto-cv scrape all' primeiro.")
+        close_db()
+        return
+
+    console.print(f"\n[cyan]📊 Comparando com {len(jobs)} vagas...[/cyan]")
+
+    # Run pipeline
+    config = MatchConfig(
+        similarity_threshold=min_score,
+        top_k_cosine=top_n * 3,  # Get more for reranker to choose from
+        top_k_final=top_n,
+        use_reranker=rerank,
+    )
+
+    with console.status("[bold green]Executando pipeline..."):
+        pipeline = MatchingPipeline(config=config, settings=settings)
+        result = pipeline.run(profile, jobs, profile_id=profile_id, save_to_db=save)
+
+    # Display results
+    _print_match_results(result, profile)
+
+    close_db()
 
 
 @match_app.command("embeddings")
 def match_embeddings(
-    rebuild: bool = typer.Option(False, "--rebuild"),
+    rebuild: bool = typer.Option(False, "--rebuild", help="Rebuild all embeddings"),
+    stats: bool = typer.Option(True, "--stats/--no-stats", help="Mostrar estatísticas do cache"),
 ):
-    """Gerencia cache de embeddings (placeholder)."""
-    console.print("[yellow]⚠ Embeddings não implementado (Fase 3)[/yellow]")
+    """Gerencia cache de embeddings."""
+    manager = get_embedding_manager()
+
+    if rebuild:
+        with console.status("[bold yellow]Limpando cache..."):
+            manager.clear_cache()
+        console.print("✅ [green]Cache limpo[/green]")
+
+    if stats:
+        s = manager.get_stats()
+        table = Table(title="📦 Embedding Cache Stats", show_header=True, header_style="bold cyan")
+        table.add_column("Métrica", style="cyan")
+        table.add_column("Valor", style="white")
+
+        table.add_row("Modelo", s["model"])
+        table.add_row("Device", s["device"])
+        table.add_row("Cache Memória", str(s["memory_cache_size"]))
+        table.add_row("Cache SQLite", str(s["sqlite_cache_size"]))
+        table.add_row("Hits", str(s["cache_hits"]))
+        table.add_row("Misses", str(s["cache_misses"]))
+        table.add_row("Hit Rate", f"{s['hit_rate']:.1%}")
+
+        console.print(table)
+
+
+def _print_match_results(result: "PipelineResult", profile: "Profile") -> None:
+    """Print formatted match results."""
+    if not result.final_matches:
+        console.print("\n[yellow]⚠ Nenhum match acima do threshold[/yellow]")
+        return
+
+    console.print(f"\n✅ [bold green]Pipeline concluído em {result.duration_seconds:.1f}s[/bold green]")
+    console.print(f"   Vagas comparadas: {result.total_jobs}")
+    console.print(f"   Matches cosine: {result.cosine_matches}")
+    console.print(f"   Matches finais: {result.reranked_matches}")
+
+    if result.rerank_summary:
+        console.print(f"   Modelo LLM: {result.rerank_summary.model_used}")
+
+    # Top matches table
+    table = Table(title=f"🏆 Top {len(result.final_matches)} Matches", show_header=True, header_style="bold cyan")
+    table.add_column("Rank", justify="right", style="dim")
+    table.add_column("Score", justify="right", style="magenta")
+    table.add_column("Método", style="yellow", max_width=12)
+    table.add_column("Vaga", style="white", max_width=35)
+    table.add_column("Empresa", style="cyan", max_width=20)
+    table.add_column("Local", style="green", max_width=18)
+    table.add_column("Modalidade", style="blue", max_width=10)
+
+    for match in result.final_matches[:20]:
+        method = "🤖 LLM" if match.match_method == "llm_rerank" else "📐 Cosine"
+        table.add_row(
+            str(match.rank),
+            f"{match.score:.3f}",
+            method,
+            match.job.title[:33] + ".." if len(match.job.title) > 35 else match.job.title,
+            match.job.company[:18] + ".." if len(match.job.company) > 20 else match.job.company,
+            (match.job.location[:16] + "..") if match.job.location and len(match.job.location) > 18 else (match.job.location or "—"),
+            match.job.work_mode or "—",
+        )
+
+    console.print(table)
+
+    # Show reasoning for top 3 LLM reranked
+    llm_matches = [m for m in result.final_matches if m.match_method == "llm_rerank"]
+    if llm_matches:
+        console.print("\n[bold]🧠 Raciocínio LLM (Top 3):[/bold]")
+        for match in llm_matches[:3]:
+            details = match.match_details or {}
+            reasoning = details.get("reasoning", "N/A")
+            console.print(f"  [cyan]#{match.rank}[/cyan] {match.job.title} @ {match.job.company}")
+            console.print(f"    [dim]{reasoning[:120]}...[/dim]" if len(reasoning) > 120 else f"    [dim]{reasoning}[/dim]")
 
 
 # ============================================================

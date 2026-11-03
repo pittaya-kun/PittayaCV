@@ -291,6 +291,39 @@ class EmbeddingCache(Base, TimestampMixin):
         return f"<EmbeddingCache(id={self.id}, hash={self.content_hash[:12]}, model={self.model_name})>"
 
 
+class Match(Base, TimestampMixin):
+    """
+    Match entre perfil e vaga.
+
+    Single Responsibility: Armazena resultado do matching para reprodutibilidade.
+    Open/Closed: Detalhes do score via JSON match_details.
+    """
+
+    __tablename__ = "matches"
+    __table_args__ = (
+        Index("ix_matches_profile_id", "profile_id"),
+        Index("ix_matches_job_id", "job_id"),
+        UniqueConstraint("profile_id", "job_id", name="uq_match_profile_job"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # FKs
+    profile_id = Column(Integer, nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Score
+    score = Column(Float, nullable=False, index=True)                           # 0-1
+    match_method = Column(String(20), nullable=False)                           # MatchMethod
+    match_details = Column(SQLiteJSON, nullable=True)                           # Breakdown (cosine, llm, reasoning)
+
+    # Relacionamento
+    job = relationship("Job", backref="matches")
+
+    def __repr__(self) -> str:
+        return f"<Match(id={self.id}, profile={self.profile_id}, job={self.job_id}, score={self.score:.3f})>"
+
+
 # ============================================================
 # SCHEMA MANAGEMENT (SRP - separado dos models)
 # ============================================================
@@ -378,6 +411,23 @@ def create_embedding_cache(
     )
 
 
+def create_match(
+    profile_id: int,
+    job_id: int,
+    score: float,
+    match_method: str,
+    **kwargs
+) -> Match:
+    """Factory para criar Match."""
+    return Match(
+        profile_id=profile_id,
+        job_id=job_id,
+        score=score,
+        match_method=match_method,
+        **kwargs
+    )
+
+
 # ============================================================
 # EXPORTS
 # ============================================================
@@ -396,6 +446,7 @@ __all__ = [
     "Application",
     "SearchHistory",
     "EmbeddingCache",
+    "Match",
     # Schema management
     "create_all_tables",
     "drop_all_tables",
@@ -405,4 +456,5 @@ __all__ = [
     "create_application",
     "create_search_history",
     "create_embedding_cache",
+    "create_match",
 ]

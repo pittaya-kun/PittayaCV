@@ -54,6 +54,14 @@ class ScrapedJob:
 
     def to_job(self) -> Job:
         """Convert to SQLAlchemy Job model."""
+        from datetime import datetime
+        posted_dt = None
+        if self.posted_date:
+            try:
+                posted_dt = datetime.fromisoformat(self.posted_date)
+            except (ValueError, TypeError):
+                pass  # Ignore invalid dates
+
         return create_job(
             source=self.source.value,
             external_id=self.external_id,
@@ -69,7 +77,7 @@ class ScrapedJob:
             salary_max=self.salary_max,
             salary_currency=self.salary_currency,
             salary_period=self.salary_period,
-            posted_date=self.posted_date,
+            posted_date=posted_dt,
             raw_data=self.raw_data,
         )
 
