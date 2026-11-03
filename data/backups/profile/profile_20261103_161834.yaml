@@ -1,0 +1,227 @@
+personal:
+  name: Seu Nome
+  email: seu@email.com
+  phone: +55 11 99999-9999
+  location: São Paulo, SP, Brasil
+  linkedin: https://linkedin.com/in/seuusuario
+  github: https://github.com/seuusuario
+  portfolio: https://seuportfolio.com/
+  summary: Resumo profissional 2-3 linhas...
+experience:
+- company: Empresa Atual
+  role: Senior Software Engineer
+  start_date: '2022-01-01'
+  end_date: null
+  location: São Paulo, SP (Remote)
+  work_mode: remote
+  description: Liderança técnica de...
+  achievements:
+  - Reduziu latência em 40%...
+  - Mentorou 5 engenheiros...
+  technologies:
+  - Python
+  - PostgreSQL
+  - AWS
+  - Kubernetes
+  - React
+  is_current: true
+  duration_months: 58
+education:
+- institution: Universidade X
+  degree: Bacharelado em Ciência da Computação
+  field_of_study: null
+  start_date: '2016-01-01'
+  end_date: '2020-12-01'
+  gpa: null
+  highlights:
+  - Iniciação Científica
+  - Monitoria
+  is_current: false
+skills:
+- category: languages
+  name: Python
+  level: 5
+  years_experience: 8.0
+- category: languages
+  name: TypeScript
+  level: 4
+  years_experience: 5.0
+- category: languages
+  name: Go
+  level: 3
+  years_experience: 2.0
+- category: languages
+  name: SQL
+  level: 5
+  years_experience: 8.0
+- category: languages
+  name: Rust
+  level: 2
+  years_experience: 1.0
+- category: frameworks
+  name: FastAPI
+  level: 5
+  years_experience: 4.0
+- category: frameworks
+  name: React
+  level: 4
+  years_experience: 5.0
+- category: frameworks
+  name: Next.js
+  level: 3
+  years_experience: 2.0
+- category: frameworks
+  name: Django
+  level: 3
+  years_experience: 3.0
+- category: infrastructure
+  name: AWS
+  level: 5
+  years_experience: 6.0
+- category: infrastructure
+  name: Docker
+  level: 5
+  years_experience: 6.0
+- category: infrastructure
+  name: Kubernetes
+  level: 4
+  years_experience: 4.0
+- category: infrastructure
+  name: Terraform
+  level: 4
+  years_experience: 3.0
+- category: infrastructure
+  name: GitHub Actions
+  level: 5
+  years_experience: 5.0
+- category: databases
+  name: PostgreSQL
+  level: 5
+  years_experience: 7.0
+- category: databases
+  name: Redis
+  level: 4
+  years_experience: 5.0
+- category: databases
+  name: MongoDB
+  level: 3
+  years_experience: 3.0
+- category: databases
+  name: Elasticsearch
+  level: 3
+  years_experience: 2.0
+- category: soft_skills
+  name: CI/CD
+  level: null
+  years_experience: null
+- category: soft_skills
+  name: Microservices
+  level: null
+  years_experience: null
+- category: soft_skills
+  name: System Design
+  level: null
+  years_experience: null
+- category: soft_skills
+  name: Mentoring
+  level: null
+  years_experience: null
+- category: soft_skills
+  name: Code Review
+  level: null
+  years_experience: null
+languages:
+- language: Português
+  level: Nativo
+  certified: false
+- language: Inglês
+  level: C1 (Avançado)
+  certified: false
+preferences:
+  job_types:
+  - full-time
+  - contract
+  work_modes:
+  - remote
+  - hybrid
+  locations:
+  - Brasil
+  - Remote Global
+  - Portugal
+  - Alemanha
+  exclude_locations: []
+  salary_min_brl: null
+  salary_min_usd: null
+  salary_negotiable: true
+  keywords_include:
+  - backend
+  - api
+  - cloud
+  - architect
+  - lead
+  - senior
+  - python
+  - aws
+  - kubernetes
+  keywords_exclude:
+  - frontend-only
+  - php
+  - wordpress
+  - sales
+  - support
+  - estágio
+  - júnior
+  companies_exclude: []
+  companies_prefer: []
+  visa_sponsorship: false
+  remote_ok_anywhere: true
+  notice_period_days: null
+meta:
+  created_at: '2026-11-03T16:18:34.516354'
+  updated_at: '2026-11-03T16:18:34.517294'
+  version: 2
+  source: manual
+total_experience_years: 4.833333333333333
+current_role: Senior Software Engineer
+current_company: Empresa Atual
+top_skills:
+- Python
+- TypeScript
+- Go
+- SQL
+- Rust
+- FastAPI
+- React
+- Next.js
+- Django
+- AWS
+skill_keywords:
+- python
+- typescript
+- go
+- sql
+- rust
+- fastapi
+- react
+- next.js
+- django
+- aws
+- docker
+- kubernetes
+- terraform
+- github actions
+- postgresql
+- redis
+- mongodb
+- elasticsearch
+- ci/cd
+- microservices
+- system design
+- mentoring
+- code review
+preferred_locations_normalized:
+- brasil
+- remote global
+- portugal
+- alemanha
+is_senior_level: true
