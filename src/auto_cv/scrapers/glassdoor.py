@@ -57,9 +57,8 @@ class GlassdoorScraper(BaseScraper):
     def __init__(self, country: str = "br", **kwargs):
         self.country = country.lower()
         base_url = self.DOMAINS.get(self.country, self.DOMAINS["br"])
-        kwargs["base_url"] = base_url
-        super().__init__(**kwargs)
         self.BASE_URL = base_url
+        super().__init__(**kwargs)
 
     def build_search_url(self, filters: SearchFilters, page: int) -> str:
         """Build Glassdoor search URL."""

@@ -21,14 +21,17 @@ from auto_cv.scrapers.base import (
     get_scraper,
     list_scrapers,
     register_scraper,
+    _SCRAPER_REGISTRY,
 )
 from auto_cv.scrapers.glassdoor import GlassdoorScraper
 from auto_cv.scrapers.gupy import GupyScraper
 from auto_cv.scrapers.indeed import IndeedScraper
 from auto_cv.scrapers.linkedin import LinkedInScraper
 from auto_cv.scrapers.remoteok import RemoteOKScraper
+from auto_cv.scrapers.remoteok_pw import RemoteOKPlaywrightScraper, scrape_remoteok_sync
 from auto_cv.scrapers.vagas_com import VagasComScraper
 from auto_cv.scrapers.wellfound import WellfoundScraper
+from auto_cv.scrapers.wellfound_pw import WellfoundPlaywrightScraper, scrape_wellfound_sync
 from auto_cv.storage.models import Job, JobSource
 from auto_cv.storage.sqlite import JobRepository, SearchHistoryRepository, session_scope
 
@@ -99,35 +102,68 @@ class ScraperFactory:
         all_errors: List[str] = []
         all_jobs: List[ScrapedJob] = []
 
-        # Scrape concurrently
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self._scrape_source, source, filters, enrich_details): source
-                for source in sources
-            }
+        # Separate async and sync sources
+        async_sources = []
+        sync_sources = []
 
-            for future in futures:
-                source = futures[future]
-                try:
-                    result = future.result()
-                    all_results[source] = result
-                    all_errors.extend([f"{source.value}: {e}" for e in result.errors])
+        for source in sources:
+            # Skip sources without registered scrapers
+            if source not in list_scrapers():
+                all_results[source] = ScrapeResult(
+                    jobs=[],
+                    total_found=0,
+                    pages_scraped=0,
+                    errors=[f"No scraper registered for {source.value}"],
+                    duration_seconds=0,
+                )
+                continue
 
-                    # Deduplicate
-                    for job in result.jobs:
-                        if job.url not in self._seen_urls:
-                            self._seen_urls.add(job.url)
-                            all_jobs.append(job)
+            scraper_class = _SCRAPER_REGISTRY.get(source)
+            if scraper_class and hasattr(scraper_class, 'search') and asyncio.iscoroutinefunction(scraper_class.search):
+                async_sources.append(source)
+            else:
+                sync_sources.append(source)
 
-                except Exception as e:
-                    all_errors.append(f"{source.value}: {str(e)}")
-                    all_results[source] = ScrapeResult(
-                        jobs=[],
-                        total_found=0,
-                        pages_scraped=0,
-                        errors=[str(e)],
-                        duration_seconds=0,
-                    )
+        # Run async scrapers
+        if async_sources:
+            async_results = asyncio.run(self._scrape_async_sources(async_sources, filters, enrich_details))
+            for source, result in async_results.items():
+                all_results[source] = result
+                all_errors.extend([f"{source.value}: {e}" for e in result.errors])
+                for job in result.jobs:
+                    if job.url not in self._seen_urls:
+                        self._seen_urls.add(job.url)
+                        all_jobs.append(job)
+
+        # Run sync scrapers in thread pool
+        if sync_sources:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {
+                    executor.submit(self._scrape_source, source, filters, enrich_details): source
+                    for source in sync_sources
+                }
+
+                for future in futures:
+                    source = futures[future]
+                    try:
+                        result = future.result()
+                        all_results[source] = result
+                        all_errors.extend([f"{source.value}: {e}" for e in result.errors])
+
+                        for job in result.jobs:
+                            if job.url not in self._seen_urls:
+                                self._seen_urls.add(job.url)
+                                all_jobs.append(job)
+
+                    except Exception as e:
+                        all_errors.append(f"{source.value}: {str(e)}")
+                        all_results[source] = ScrapeResult(
+                            jobs=[],
+                            total_found=0,
+                            pages_scraped=0,
+                            errors=[str(e)],
+                            duration_seconds=0,
+                        )
 
         # Save to database
         new_count = 0
@@ -143,6 +179,33 @@ class ScraperFactory:
             errors=all_errors,
             duration_seconds=duration,
         )
+
+    async def _scrape_async_sources(
+        self,
+        sources: List[JobSource],
+        filters: Optional[SearchFilters],
+        enrich_details: bool,
+    ) -> Dict[JobSource, ScrapeResult]:
+        """Scrape async sources concurrently using asyncio."""
+        async def scrape_one(source: JobSource) -> tuple:
+            scraper = self.get_scraper(source)
+            result = await scraper.search(filters)
+            if enrich_details and result.jobs:
+                result.jobs = await scraper.scrape_job_details(result.jobs)
+            return source, result
+
+        tasks = [scrape_one(source) for source in sources]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        output = {}
+        for result in results:
+            if isinstance(result, Exception):
+                # This shouldn't happen with return_exceptions=True
+                continue
+            source, scrape_result = result
+            output[source] = scrape_result
+
+        return output
 
     def _scrape_source(
         self,
@@ -234,13 +297,21 @@ def scrape_source(
     save_to_db: bool = True,
     enrich_details: bool = False,
 ) -> ScrapeResult:
-    """Convenience function to scrape a single source (no thread pool)."""
+    """Convenience function to scrape a single source (handles async scrapers)."""
     factory = get_factory()
     scraper = factory.get_scraper(source)
-    result = scraper.search(filters)
 
-    if enrich_details and result.jobs:
-        result.jobs = scraper.scrape_job_details(result.jobs)
+    # Check if scraper has async search method (Playwright)
+    if hasattr(scraper, 'search') and asyncio.iscoroutinefunction(scraper.search):
+        result = asyncio.run(scraper.search(filters))
+
+        if enrich_details and result.jobs:
+            result.jobs = asyncio.run(scraper.scrape_job_details(result.jobs))
+    else:
+        result = scraper.search(filters)
+
+        if enrich_details and result.jobs:
+            result.jobs = scraper.scrape_job_details(result.jobs)
 
     if save_to_db and result.jobs:
         from auto_cv.storage.sqlite import JobRepository, SearchHistoryRepository, session_scope
@@ -261,7 +332,7 @@ def scrape_source(
             history_repo.update(
                 history.id,
                 results_count=len(result.jobs),
-                new_jobs_count=len(result.jobs),  # Simplified
+                new_jobs_count=len(result.jobs),
             )
 
     return result

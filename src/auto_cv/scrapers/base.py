@@ -101,6 +101,44 @@ class ScrapeResult:
 # RATE LIMITER (SRP - only rate limiting)
 # ============================================================
 
+import threading
+
+
+class SyncRateLimiter:
+    """Token bucket rate limiter (thread-safe for sync code)."""
+
+    def __init__(self, requests_per_second: float = 0.5, burst: int = 3):
+        """
+        Args:
+            requests_per_second: Sustained rate (e.g., 0.5 = 1 req per 2s)
+            burst: Max burst allowance
+        """
+        self.rate = requests_per_second
+        self.burst = burst
+        self.tokens = float(burst)
+        self.last_update = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Synchronous version (for non-async scrapers)."""
+        with self._lock:
+            while True:
+                now = time.monotonic()
+                elapsed = now - self.last_update
+                self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+                self.last_update = now
+
+                if self.tokens >= 1:
+                    self.tokens -= 1
+                    return
+
+                wait_time = (1 - self.tokens) / self.rate
+                time.sleep(wait_time)
+
+    # Alias for ScraperSession compatibility
+    acquire_sync = acquire
+
+
 class RateLimiter:
     """Token bucket rate limiter (thread-safe for async)."""
 
@@ -135,6 +173,7 @@ class RateLimiter:
 
     def acquire_sync(self) -> None:
         """Synchronous version (for non-async scrapers)."""
+        # Use sync logic without lock (less precise but works)
         while True:
             now = time.monotonic()
             elapsed = now - self.last_update
@@ -279,7 +318,7 @@ class BaseScraper(ABC):
     ):
         self.settings = settings or get_settings()
         self.max_pages = max_pages or self.MAX_PAGES
-        self.rate_limiter = RateLimiter(rate_limit or self.DEFAULT_RATE_LIMIT)
+        self.rate_limiter = SyncRateLimiter(rate_limit or self.DEFAULT_RATE_LIMIT)
         self.session = ScraperSession(
             base_url=self.BASE_URL,
             rate_limiter=self.rate_limiter,
@@ -429,6 +468,7 @@ __all__ = [
     "ScrapeResult",
     # Rate limiting
     "RateLimiter",
+    "SyncRateLimiter",
     # Session
     "ScraperSession",
     # Base

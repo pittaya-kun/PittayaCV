@@ -668,21 +668,95 @@ def config_set(
 
 
 # ============================================================
-# COMMANDS: SCRAPE (Fase 2 - placeholder)
+# COMMANDS: SCRAPE (Fase 2)
 # ============================================================
 
 scrape_app = typer.Typer(name="scrape", help="Scraping de vagas (Fase 2)")
 app.add_typer(scrape_app)
 
 
+def _run_scrape(
+    source: str,
+    query: str,
+    location: str,
+    pages: int,
+    work_mode: Optional[str],
+    job_type: Optional[str],
+    save: bool,
+    enrich: bool,
+):
+    """Internal scrape runner."""
+    from auto_cv.scrapers import scrape_source, get_factory
+    from auto_cv.scrapers.base import SearchFilters
+    from auto_cv.storage.models import JobSource
+
+    try:
+        job_source = JobSource(source.lower())
+    except ValueError:
+        console.print(f"[red]Fonte inválida: {source}[/red]")
+        console.print(f"Fontes disponíveis: {[s.value for s in JobSource]}")
+        return
+
+    filters = SearchFilters(
+        query=query,
+        location=location,
+        work_mode=work_mode,
+        job_type=job_type,
+    )
+
+    console.print(f"\n[cyan]🔍 Scraping {source}...[/cyan]")
+    console.print(f"   Query: {query}")
+    console.print(f"   Location: {location}")
+    console.print(f"   Pages: {pages}")
+
+    with console.status("[bold green]Buscando vagas..."):
+        result = scrape_source(job_source, filters=filters, save_to_db=save, enrich_details=enrich)
+
+    # Show results
+    if result.errors:
+        for err in result.errors:
+            console.print(f"[red]Erro: {err}[/red]")
+
+    console.print(f"\n✅ [green]Concluído:[/green] {result.total_found} vagas encontradas em {result.pages_scraped} páginas ({result.duration_seconds:.1f}s)")
+
+    if result.jobs:
+        table = Table(title=f"Vagas - {source}", show_header=True, header_style="bold cyan")
+        table.add_column("Título", style="white", max_width=40)
+        table.add_column("Empresa", style="cyan", max_width=25)
+        table.add_column("Local", style="dim", max_width=20)
+        table.add_column("Modalidade", style="yellow", max_width=12)
+        table.add_column("Tipo", style="green", max_width=12)
+
+        for job in result.jobs[:10]:
+            table.add_row(
+                job.title[:38],
+                job.company[:23],
+                job.location[:18] if job.location else "—",
+                job.work_mode or "—",
+                job.job_type or "—",
+            )
+
+        if len(result.jobs) > 10:
+            table.add_row(f"[dim]... e mais {len(result.jobs) - 10}[/dim]", "", "", "", "")
+
+        console.print(table)
+
+    if save and result.total_found > 0:
+        console.print(f"\n💾 [green]Salvas no banco:[/green] {result.total_found} vagas")
+
+
 @scrape_app.command("linkedin")
 def scrape_linkedin(
-    query: str = typer.Option("python", "--query", "-q"),
-    location: str = typer.Option("Brasil", "--location", "-l"),
-    pages: int = typer.Option(3, "--pages", "-p"),
+    query: str = typer.Option("python", "--query", "-q", help="Busca (ex: python, data scientist)"),
+    location: str = typer.Option("Brasil", "--location", "-l", help="Localização"),
+    pages: int = typer.Option(3, "--pages", "-p", help="Número de páginas"),
+    work_mode: Optional[str] = typer.Option(None, "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save", help="Salvar no banco"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich", help="Buscar detalhes da vaga"),
 ):
-    """Scrapa LinkedIn (placeholder)."""
-    console.print("[yellow]⚠ LinkedIn scraper não implementado (Fase 2)[/yellow]")
+    """Scrapa LinkedIn Jobs."""
+    _run_scrape("linkedin", query, location, pages, work_mode, job_type, save, enrich)
 
 
 @scrape_app.command("indeed")
@@ -690,18 +764,153 @@ def scrape_indeed(
     query: str = typer.Option("python", "--query", "-q"),
     location: str = typer.Option("Brasil", "--location", "-l"),
     pages: int = typer.Option(3, "--pages", "-p"),
+    work_mode: Optional[str] = typer.Option(None, "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
 ):
-    """Scrapa Indeed (placeholder)."""
-    console.print("[yellow]⚠ Indeed scraper não implementado (Fase 2)[/yellow]")
+    """Scrapa Indeed."""
+    _run_scrape("indeed", query, location, pages, work_mode, job_type, save, enrich)
 
 
 @scrape_app.command("gupy")
 def scrape_gupy(
     query: str = typer.Option("python", "--query", "-q"),
+    location: str = typer.Option("", "--location", "-l"),
     pages: int = typer.Option(3, "--pages", "-p"),
+    work_mode: Optional[str] = typer.Option(None, "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
 ):
-    """Scrapa Gupy (placeholder)."""
-    console.print("[yellow]⚠ Gupy scraper não implementado (Fase 2)[/yellow]")
+    """Scrapa Gupy (Brasil)."""
+    _run_scrape("gupy", query, location, pages, work_mode, job_type, save, enrich)
+
+
+@scrape_app.command("glassdoor")
+def scrape_glassdoor(
+    query: str = typer.Option("python", "--query", "-q"),
+    location: str = typer.Option("Brasil", "--location", "-l"),
+    pages: int = typer.Option(3, "--pages", "-p"),
+    work_mode: Optional[str] = typer.Option(None, "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
+):
+    """Scrapa Glassdoor."""
+    _run_scrape("glassdoor", query, location, pages, work_mode, job_type, save, enrich)
+
+
+@scrape_app.command("remoteok")
+def scrape_remoteok(
+    query: str = typer.Option("python", "--query", "-q"),
+    pages: int = typer.Option(3, "--pages", "-p"),
+    work_mode: Optional[str] = typer.Option("remote", "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
+):
+    """Scrapa RemoteOK (vagas remotas globais)."""
+    _run_scrape("remoteok", query, "", pages, work_mode, job_type, save, enrich)
+
+
+@scrape_app.command("wellfound")
+def scrape_wellfound(
+    query: str = typer.Option("python", "--query", "-q"),
+    location: str = typer.Option("", "--location", "-l"),
+    pages: int = typer.Option(3, "--pages", "-p"),
+    work_mode: Optional[str] = typer.Option("remote", "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
+):
+    """Scrapa Wellfound (startups)."""
+    _run_scrape("wellfound", query, location, pages, work_mode, job_type, save, enrich)
+
+
+@scrape_app.command("vagas")
+def scrape_vagas(
+    query: str = typer.Option("python", "--query", "-q"),
+    location: str = typer.Option("São Paulo", "--location", "-l"),
+    pages: int = typer.Option(3, "--pages", "-p"),
+    work_mode: Optional[str] = typer.Option(None, "--work-mode", help="remote, hybrid, onsite"),
+    job_type: Optional[str] = typer.Option(None, "--job-type", help="full-time, contract, part-time"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
+):
+    """Scrapa Vagas.com (Brasil)."""
+    _run_scrape("vagas.com", query, location, pages, work_mode, job_type, save, enrich)
+
+
+@scrape_app.command("all")
+def scrape_all_cmd(
+    query: str = typer.Option("python", "--query", "-q"),
+    location: str = typer.Option("Brasil", "--location", "-l"),
+    pages: int = typer.Option(2, "--pages", "-p"),
+    sources: Optional[List[str]] = typer.Option(None, "--source", "-s", help="Fontes (default: todas)"),
+    work_mode: Optional[str] = typer.Option(None, "--work-mode"),
+    job_type: Optional[str] = typer.Option(None, "--job-type"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    enrich: bool = typer.Option(False, "--enrich/--no-enrich"),
+):
+    """Scrapa TODAS as fontes configuradas."""
+    from auto_cv.scrapers import scrape_all, get_factory
+    from auto_cv.scrapers.base import SearchFilters
+    from auto_cv.storage.models import JobSource
+
+    console.print(f"\n[cyan]🔍 Scraping TODAS as fontes...[/cyan]")
+    console.print(f"   Query: {query}")
+    console.print(f"   Location: {location}")
+    console.print(f"   Pages per source: {pages}")
+
+    # Parse sources
+    if sources:
+        job_sources = [JobSource(s.lower()) for s in sources]
+    else:
+        # Exclude MANUAL and OTHER (no real scrapers)
+        job_sources = [s for s in JobSource if s not in (JobSource.MANUAL, JobSource.OTHER)]
+
+    filters = SearchFilters(
+        query=query,
+        location=location,
+        work_mode=work_mode,
+        job_type=job_type,
+    )
+
+    with console.status("[bold green]Buscando em todas as fontes..."):
+        result = scrape_all(filters=filters, sources=job_sources, save_to_db=save, enrich_details=enrich)
+
+    # Summary
+    console.print(f"\n✅ [green]Concluído em {result.duration_seconds:.1f}s[/green]")
+    console.print(f"   Total vagas: {result.total_jobs}")
+    console.print(f"   Novas no banco: {result.total_new}")
+
+    if result.errors:
+        console.print("\n[red]Erros:[/red]")
+        for err in result.errors:
+            console.print(f"  - {err}")
+
+    # Per-source breakdown
+    table = Table(title="Resumo por Fonte", show_header=True, header_style="bold cyan")
+    table.add_column("Fonte", style="cyan")
+    table.add_column("Vagas", justify="right", style="white")
+    table.add_column("Páginas", justify="right", style="dim")
+    table.add_column("Tempo (s)", justify="right", style="green")
+    table.add_column("Erros", justify="right", style="red")
+
+    for source, r in result.results.items():
+        table.add_row(
+            source.value,
+            str(r.total_found),
+            str(r.pages_scraped),
+            f"{r.duration_seconds:.1f}",
+            str(len(r.errors)),
+        )
+
+    console.print(table)
+
+    if save and result.total_new > 0:
+        console.print(f"\n💾 [green]Salvas no banco:[/green] {result.total_new} vagas novas")
 
 
 # ============================================================
